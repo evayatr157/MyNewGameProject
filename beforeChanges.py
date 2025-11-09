@@ -1,3 +1,5 @@
+"""
+
 gameLogic.py:
 
 from settings import Settings
@@ -470,3 +472,5 @@ class Settings:
     PLAYER_POINT_RADIUS = 20
     EMPTY_POINT_RADIUS = 8
     POINT_COLOR = {PLAYER1: (255, 0, 0), PLAYER2: (0, 0, 255)}
+
+"""
