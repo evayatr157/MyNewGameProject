@@ -57,13 +57,14 @@ def is_mouse_on_point(mouse_pos, point, to_pixel, tolerance=6):
     return dist_sq <= tolerance ** 2
 
 
-class Game:
-    def __init__(self):
+class ClientSideGame:
+    def __init__(self, player_color):
         pygame.init()
         self.screen = pygame.display.set_mode((Settings.WINDOW_WIDTH, Settings.WINDOW_HEIGHT))
         pygame.display.set_caption(Settings.WINDOW_TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
+        self.player_color = player_color
 
         # Initialize game logic
         self.gameLogic = GameLogic(
@@ -106,7 +107,8 @@ class Game:
         """Main game loop."""
         while self.running:
             self.handle_events()
-            self.update_hover_state()
+            if self.player_color == self.gameLogic.turn:
+                self.update_hover_state()
             self.draw()
         self.quit()
 
@@ -144,15 +146,17 @@ class Game:
                 self.running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.running = False
-            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left-click
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and \
+                    self.player_color == self.gameLogic.turn:  # Left-click
                 # Handle point conquer
                 if self.hovered_point and self.hovered_point_is_valid:
-                    self.gameLogic.make_conquer_move(self.hovered_point)
+                    self.board.conquer_dot(self.gameLogic.turn, self.hovered_point)
                     self.next_turn()
                     return
 
                 # Handle edge placement
                 if self.hovered_edge and self.hovered_edge_is_valid:
+                    # TODO: send to server your move, and wait for permission.
                     self.gameLogic.make_move(self.hovered_edge)
                     self.next_turn()
 
@@ -212,7 +216,7 @@ class Game:
             color = Settings.BASIC_LINE_COLOR
 
             # If hovered, choose highlight or error color depending on validity
-            if is_hovered:
+            if is_hovered and self.player_color == self.gameLogic.turn:
                 if self.hovered_edge_is_valid:
                     color = Settings.PLAYER_MOUSE_ON_OBJECT_COLOR[self.gameLogic.turn]
                 else:
@@ -234,7 +238,7 @@ class Game:
         for x, y, i in self.board.all_points:
             color = Settings.BG_COLOR
             if i == -1:
-                if self.hovered_point == (x, y):
+                if self.hovered_point == (x, y) and self.player_color == self.gameLogic.turn:
                     if self.hovered_point_is_valid:
                         color = Settings.PLAYER_MOUSE_ON_OBJECT_COLOR[self.gameLogic.turn]
                     else:
@@ -259,7 +263,7 @@ class Game:
                     Settings.PLAYER_POINT_RADIUS
                 )
 
-        # Draw status info (FPS + current turn)
+        # Draw status info (current turn)
         self.draw_status_bar()
 
         pygame.display.flip()
@@ -273,11 +277,3 @@ class Game:
     def quit(self):
         """Clean up pygame on exit."""
         pygame.quit()
-
-
-# --------------------
-# MAIN ENTRY POINT
-# --------------------
-if __name__ == "__main__":
-    game = Game()
-    game.run()

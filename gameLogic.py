@@ -256,9 +256,9 @@ class GameLogic:
         n_turn = self.next_turn()
         b.conquer_dot(self.turn, (x, y))
         if not self.check_all_outs_reach_all_ins(
-            b.all_points,
-            b.players_pairs[n_turn].union(b.available_pairs),
-            b.players_original_dots[n_turn]
+                b.all_points,
+                b.players_pairs[n_turn].union(b.available_pairs),
+                b.players_original_dots[n_turn]
         ):
             b.unconquer_dot(self.turn, (x, y))
             return False
@@ -284,13 +284,14 @@ class GameLogic:
         if not (0 <= x1 < b.cols and 0 <= y1 < b.rows and 0 <= x2 < b.cols and 0 <= y2 < b.rows):
             return False
 
-        if ((x1, y1, 1), (x2, y2, -1)) not in b.available_pairs and ((x2, y2, 1), (x1, y1, -1)) not in b.available_pairs:
+        if ((x1, y1, 1), (x2, y2, -1)) not in b.available_pairs and (
+        (x2, y2, 1), (x1, y1, -1)) not in b.available_pairs:
             return False
 
         # Allow if it creates immediate win
         new_edges = {((x1, y1, 1), (x2, y2, -1)), ((x2, y2, 1), (x1, y1, -1))}
         if self.check_all_outs_reach_all_ins(
-            b.all_points, b.players_pairs[self.turn].union(new_edges), b.players_original_dots[self.turn]
+                b.all_points, b.players_pairs[self.turn].union(new_edges), b.players_original_dots[self.turn]
         ):
             return True
 
@@ -321,3 +322,6 @@ class GameLogic:
 
         self.board_obj.available_pairs.discard(edg_1)
         self.board_obj.available_pairs.discard(edg_2)
+
+    def make_conquer_move(self, dot):
+        self.board_obj.conquer_dot(self.turn, dot)
