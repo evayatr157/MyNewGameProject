@@ -1,17 +1,16 @@
-# client.py (מתוקן - threads: UI vs Network)
+# client.py (updated - threads: UI vs Network)
 import socket
 import threading
 import queue
 import time
 
-# --- הסרנו את ServerSettings ---
 import pygame
 from gameLogic import *
 from settings import Settings
 
 
 # -------------------------
-# עזרי זיהוי עכבר
+# Mouse detection helpers
 # -------------------------
 def is_mouse_on_edge(mouse_pos, edge, to_pixel, tolerance=5):
     mx, my = mouse_pos
@@ -59,16 +58,16 @@ def is_mouse_on_point(mouse_pos, point, to_pixel, tolerance=6):
 
 
 # -------------------------
-# Client side game
+# Client-side game
 # -------------------------
 class ClientSideGame:
-    def __init__(self, player_color):  # player_color יגיע כ-None
+    def __init__(self, player_color):  # player_color starts as None
         pygame.init()
         self.screen = pygame.display.set_mode((Settings.WINDOW_WIDTH, Settings.WINDOW_HEIGHT))
         pygame.display.set_caption(Settings.WINDOW_TITLE)
         self.clock = pygame.time.Clock()
         self.running = True
-        self.player_color = player_color  # יתחיל כ-None
+        self.player_color = player_color  # starts as None
 
         # Initialize game logic
         self.gameLogic = GameLogic(
@@ -81,7 +80,7 @@ class ClientSideGame:
 
         self.board = self.gameLogic.board_obj
 
-        # Fixed: ensure each (x, y) appears only once in empty_dots
+        # Ensure each (x, y) appears only once in empty_dots
         self.board.empty_dots = list({(x, y) for x, y, _ in self.board.all_points})
 
         # Calculate spacing between lines based on window size
@@ -107,7 +106,7 @@ class ClientSideGame:
         self.incoming_events = queue.Queue()  # Network -> UI: dicts with keys: type, payload
 
         # Local turn/state flags
-        self.is_my_turn = False  # יתעדכן ע"י השרת
+        self.is_my_turn = False  # updated by server
         self.awaiting_server_ok = False  # waiting for OK/NOT_OK after sending a move
 
         # Graceful shutdown flags
@@ -116,7 +115,7 @@ class ClientSideGame:
     # -------------------------
     # Socket connect & network thread
     # -------------------------
-    def start_connection_to_server(self, host='localhost', port=12345):
+    def start_connection_to_server(self, host='localhost', port=Settings.PORT):
         """Starts network thread which performs handshake and then main network loop."""
         self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -136,8 +135,7 @@ class ClientSideGame:
         """Handles handshake and then bi-directional comms with the server."""
         sock = self.client_socket
         try:
-            # --- !!! HANDSHAKE חדש !!! ---
-            # השרת שולח "WELCOME 1" או "WELCOME 2"
+            # HANDSHAKE
             data = self._recv_blocking()
             print(f"CLIENT: Received handshake: {data}")
 
@@ -154,11 +152,8 @@ class ClientSideGame:
 
             print(f"CLIENT: I am {self.player_color}. My turn: {self.is_my_turn}")
 
-            # --- סוף HANDSHAKE חדש ---
-
             # main loop: react to server messages and process outgoing moves
             while self.network_alive:
-                # Try to read incoming server messages
                 srv_msg = None
                 try:
                     srv_msg = self._try_recv()
@@ -172,28 +167,20 @@ class ClientSideGame:
                     break
 
                 if srv_msg:
-                    # --- !!! לוגיקת קבלת הודעות חדשה !!! ---
                     srv_msg = srv_msg.strip()
                     print(f"CLIENT: Received: {srv_msg}")
 
-                    # השרת שולח עדכון מהלך (שלנו או של היריב)
                     if srv_msg.startswith("UPDATE "):
-                        move_data = srv_msg[7:]  # (x1,y1,l1)->(x2,y2,l2) או (x,y,l)
+                        move_data = srv_msg[7:]
                         self.incoming_events.put({"type": "apply_update", "payload": move_data})
-
-                    # השרת דחה את המהלך שלנו
                     elif srv_msg == "INVALID_MOVE":
                         self.awaiting_server_ok = False
                         self.incoming_events.put({"type": "not_ok", "payload": None})
-
-                    # המשחק נגמר
                     elif srv_msg.startswith("END "):
-                        winner_msg = srv_msg[4:]  # "P1", "P2", או "DISCONNECTED"
+                        winner_msg = srv_msg[4:]
                         self.incoming_events.put({"type": "game_over", "payload": winner_msg})
-                        self.network_alive = False  # עצור את לולאת הרשת
-
+                        self.network_alive = False
                     else:
-                        # הודעה לא מוכרת
                         if len(srv_msg) > 0:
                             self.incoming_events.put({"type": "raw", "payload": srv_msg})
 
@@ -205,18 +192,12 @@ class ClientSideGame:
                         move = None
 
                     if move:
-                        # --- !!! לוגיקת שליחת מהלכים חדשה !!! ---
-                        # move is a tuple: ("edge", edge_obj) or ("conquer", (x,y))
                         msg = ""
                         if move[0] == "edge":
-                            # move[1] הוא אובייקט ה-edge המלא: ((x1,y1,l1),(x2,y2,l2))
                             ((x1, y1, l1), (x2, y2, l2)) = move[1]
                             msg = f"MOVE ({x1},{y1},{l1})->({x2},{y2},{l2})"
                         elif move[0] == "conquer":
-                            # move[1] הוא (x,y)
                             (x, y) = move[1]
-                            # השרת מצפה ל-3 רכיבים, הלוגיקה צריכה 2
-                            # נשלח רכיב שלישי מזויף (למשל -1)
                             msg = f"MOVE ({x},{y},-1)"
 
                         try:
@@ -227,7 +208,6 @@ class ClientSideGame:
                             self.incoming_events.put({"type": "error", "payload": f"send_failed:{e}"})
                             break
 
-                # slight sleep to avoid busy loop
                 time.sleep(0.01)
 
         finally:
@@ -242,14 +222,14 @@ class ClientSideGame:
     def _recv_blocking(self):
         """Blocking recv (ignores timeouts) used during handshake."""
         sock = self.client_socket
-        sock.settimeout(None)  # מצב חסימתי
+        sock.settimeout(None)
         try:
             data = sock.recv(1024)
             if not data:
                 return None
             return data.decode()
         finally:
-            sock.settimeout(0.5)  # החזר ללא-חסימתי
+            sock.settimeout(0.5)
 
     def _try_recv(self):
         """Non-blocking-ish recv returning decoded string or None."""
@@ -257,18 +237,17 @@ class ClientSideGame:
         try:
             data = sock.recv(1024)
             if not data:
-                # remote closed
                 raise ConnectionResetError()
             return data.decode()
         except socket.timeout:
             return None
 
     # -------------------------
-    # API ל־UI כדי לשלוח מהלכים
+    # UI API to send moves
     # -------------------------
     def send_server_edge_move(self, edge):
         """Called from UI thread when player clicks to place an edge.
-           Returns immediately True if the move was queued, False otherwise."""
+           Returns True if move was queued."""
         if not self.network_alive:
             print("CLIENT: network not alive - cannot send move")
             return False
@@ -279,8 +258,6 @@ class ClientSideGame:
             print("CLIENT: awaiting server response for previous move")
             return False
 
-        # --- תיקון: שלח את אובייקט ה-edge המלא ---
-        # edge הוא ((x1,y1,l1),(x2,y2,l2))
         self.outgoing_moves.put(("edge", edge))
         return True
 
@@ -305,20 +282,15 @@ class ClientSideGame:
     # -------------------------
     def run(self):
         """Main Pygame UI loop. Starts network thread first."""
-        # start network
         self.start_connection_to_server()
 
         while self.running:
-            # Process any incoming network events before handling new events/draw
             self._process_incoming_events()
-
             self.handle_events()
 
-            # --- תיקון: בודק is_my_turn ---
             if self.is_my_turn:
                 self.update_hover_state()
             else:
-                # נקה מצב ריחוף אם זה לא התור שלי
                 self.hovered_edge = None
                 self.hovered_point = None
                 self.hovered_edge_is_valid = False
@@ -327,7 +299,6 @@ class ClientSideGame:
             self.draw()
             self.clock.tick(Settings.FPS)
 
-        # shutdown
         self.network_alive = False
         if self.net_thread:
             self.net_thread.join(timeout=1)
@@ -336,28 +307,25 @@ class ClientSideGame:
                 self.client_socket.close()
             except Exception:
                 pass
-        self.quit()
+        # self.quit()
 
     # --------------------
-    # MOUSE DETECTION
+    # Mouse detection
     # --------------------
     def update_hover_state(self):
         mouse_pos = pygame.mouse.get_pos()
 
-        # Reset previous hover states
         self.hovered_edge = None
         self.hovered_point = None
         self.hovered_edge_is_valid = False
         self.hovered_point_is_valid = False
 
-        # Check points first (smaller search space)
         for dot in self.board.empty_dots:
             if is_mouse_on_point(mouse_pos, dot, self.to_pixel):
                 self.hovered_point = dot
                 self.hovered_point_is_valid = self.gameLogic.check_conquer_input(dot)
-                return  # Point hover has priority over edges
+                return
 
-        # Then check edges (potentially many)
         for edge in self.board.available_pairs:
             if is_mouse_on_edge(mouse_pos, edge, self.to_pixel):
                 self.hovered_edge = edge
@@ -370,40 +338,25 @@ class ClientSideGame:
                 self.running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                 self.running = False
-            # --- תיקון: בודק is_my_turn ---
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and self.is_my_turn:
-                # Handle point conquer
                 if self.hovered_point and self.hovered_point_is_valid:
-                    queued = self.send_server_conquer_move(self.hovered_point)
-                    if queued:
-                        # אנו לא מחילים מיד - מחכים ל-UPDATE מהשרת
-                        pass
+                    self.send_server_conquer_move(self.hovered_point)
                     return
-
-                # Handle edge placement
                 if self.hovered_edge and self.hovered_edge_is_valid:
-                    queued = self.send_server_edge_move(self.hovered_edge)
-                    if queued:
-                        # מחכים ל-UPDATE
-                        pass
+                    self.send_server_edge_move(self.hovered_edge)
 
     # --------------------
-    # PROCESS NETWORK EVENTS (called in UI thread)
+    # Process server/network events
     # --------------------
     def _apply_server_update(self, move_str):
-        """
-        פונקציית עזר חדשה.
-        מנתחת מחרוזת מהלך מהשרת ומפעילה אותה על ה-gameLogic המקומי.
-        """
+        """Parse move string from server and apply to local gameLogic."""
         try:
             move_str = move_str.replace("(", "").replace(")", "")
             if "->" in move_str:
-                # Edge move
                 parts = move_str.split("->")
-                p1_str = parts[0].split(",")  # (x1, y1, l1)
-                p2_str = parts[1].split(",")  # (x2, y2, l2)
+                p1_str = parts[0].split(",")
+                p2_str = parts[1].split(",")
 
-                # הפונקציה make_move צריכה רק ((x1,y1), (x2,y2))
                 p1 = (int(p1_str[0]), int(p1_str[1]))
                 p2 = (int(p2_str[0]), int(p2_str[1]))
 
@@ -411,10 +364,7 @@ class ClientSideGame:
                 print(f"CLIENT: Applied server edge move: {p1}->{p2}")
                 return True
             else:
-                # Conquer move
-                p_str = move_str.split(",")  # (x, y, l)
-
-                # הפונקציה make_conquer_move צריכה רק (x,y)
+                p_str = move_str.split(",")
                 p = (int(p_str[0]), int(p_str[1]))
                 self.gameLogic.make_conquer_move(p)
                 print(f"CLIENT: Applied server conquer move: {p}")
@@ -424,8 +374,7 @@ class ClientSideGame:
             return False
 
     def _process_incoming_events(self):
-        """Apply events that came from the server/network thread to local game state & UI."""
-        # --- !!! לוגיקה חדשה לעיבוד אירועים !!! ---
+        """Apply events from server/network to local game state & UI."""
         processed_any = False
         while True:
             try:
@@ -440,28 +389,20 @@ class ClientSideGame:
             if etype == "status":
                 print("Status:", payload)
                 if payload == "game_start_P1" or payload == "game_start_P2":
-                    # עכשיו אנחנו יודעים מי אנחנו, נעדכן את הכותרת
                     pygame.display.set_caption(f"{Settings.WINDOW_TITLE} - Player: {self.player_color}")
-
             elif etype == "apply_update":
-                # השרת שלח עדכון מהלך (שלנו או של היריב)
-                # עלינו להחיל אותו מקומית ולקדם את התור
                 move_str = payload
                 success = self._apply_server_update(move_str)
                 if success:
-                    # המהלך הוחל בהצלחה, קדם את התור מקומית
                     self.gameLogic.turn = self.gameLogic.next_turn()
                     self.is_my_turn = (self.player_color == self.gameLogic.turn)
-                    self.awaiting_server_ok = False  # הפסק לחכות לאישור
+                    self.awaiting_server_ok = False
                     print(f"CLIENT: Update applied. New turn: {self.gameLogic.turn}. My turn: {self.is_my_turn}")
                 else:
                     print(f"CLIENT: !! CRITICAL: Failed to apply server update '{move_str}'")
-
             elif etype == "not_ok":
                 self.awaiting_server_ok = False
                 print("Server: NOT OK (move rejected)")
-                # אפשר להציג הודעת שגיאה למשתמש
-
             elif etype == "game_over":
                 payload = payload.strip()
                 if payload == "DISCONNECTED":
@@ -471,7 +412,6 @@ class ClientSideGame:
                 else:
                     print(f"Game over: YOU LOSE! ({payload} won)")
                 self.running = False
-
             elif etype == "error":
                 print("Network error:", payload)
                 self.running = False
@@ -483,24 +423,7 @@ class ClientSideGame:
         return processed_any
 
     # --------------------
-    # TURN HANDLING
-    # --------------------
-    def next_turn(self):
-        """
-        הפונקציה הזו כבר לא בשימוש ישיר להעברת תור ברשת.
-        היא נקראת ע"י _process_incoming_events לאחר קבלת UPDATE.
-        """
-        winner = self.gameLogic.check_win()
-        if winner:
-            self.board.print_board()
-            print(f"{winner} has won!")
-            self.running = False
-
-        # עדכון התור מטופל כעת ב- _process_incoming_events
-        # self.gameLogic.turn = self.gameLogic.next_turn()
-
-    # --------------------
-    # DRAWING
+    # Drawing
     # --------------------
     def to_pixel(self, x, y):
         return (
@@ -511,10 +434,9 @@ class ClientSideGame:
     def draw(self):
         self.screen.fill(Settings.BG_COLOR)
 
-        # Draw existing bridges (edges owned by players)
+        # Draw existing bridges
         for player, edges in self.board.players_pairs.items():
             for edge in edges:
-                # edge is ((x1,y1,k1),(x2,y2,k2))
                 color = Settings.PLAYERS_LINE_COLORS[player]
                 pygame.draw.line(
                     self.screen, color,
@@ -523,7 +445,7 @@ class ClientSideGame:
                     Settings.LINE_WIDTH + 2
                 )
 
-        # Draw available edges (dim color, highlighted when hovered)
+        # Draw available edges
         seen = set()
         for edge in self.board.available_pairs:
             p1 = (edge[0][0], edge[0][1])
@@ -541,7 +463,7 @@ class ClientSideGame:
                     is_hovered = True
 
             color = Settings.BASIC_LINE_COLOR
-            if is_hovered and self.is_my_turn:  # בדוק is_my_turn
+            if is_hovered and self.is_my_turn:
                 if self.hovered_edge_is_valid:
                     color = Settings.PLAYER_MOUSE_ON_OBJECT_COLOR[self.gameLogic.turn]
                 else:
@@ -550,25 +472,20 @@ class ClientSideGame:
             p1_px = self.to_pixel(p1[0], p1[1])
             p2_px = self.to_pixel(p2[0], p2[1])
 
-            pygame.draw.line(
-                self.screen, color,
-                p1_px,
-                p2_px,
-                Settings.LINE_WIDTH
-            )
+            pygame.draw.line(self.screen, color, p1_px, p2_px, Settings.LINE_WIDTH)
 
-        # Draw empty points (hovered point glows)
+        # Draw empty points
         for x, y, i in self.board.all_points:
             color = Settings.BG_COLOR
             if i == -1:
-                if self.hovered_point == (x, y) and self.is_my_turn:  # בדוק is_my_turn
+                if self.hovered_point == (x, y) and self.is_my_turn:
                     if self.hovered_point_is_valid:
                         color = Settings.PLAYER_MOUSE_ON_OBJECT_COLOR[self.gameLogic.turn]
                     else:
                         color = Settings.ERROR_LINE_COLOR
                 pygame.draw.circle(self.screen, color, self.to_pixel(x, y), Settings.EMPTY_POINT_RADIUS)
 
-        # Draw conquered (owned) dots
+        # Draw conquered dots
         for player, points in self.board.conquer_dots.items():
             for x, y in points:
                 pygame.draw.circle(
@@ -577,7 +494,7 @@ class ClientSideGame:
                     Settings.EMPTY_POINT_RADIUS
                 )
 
-        # Draw original player dots (stronger visual)
+        # Draw original player dots
         for player, points in self.board.players_original_dots.items():
             for x, y, _ in points:
                 pygame.draw.circle(
@@ -586,13 +503,12 @@ class ClientSideGame:
                     Settings.PLAYER_POINT_RADIUS
                 )
 
-        # Draw status info (current turn)
+        # Draw status bar
         self.draw_status_bar()
 
         pygame.display.flip()
 
     def draw_status_bar(self):
-        # --- סרגל סטטוס משופר ---
         font = pygame.font.SysFont(None, 24)
 
         my_player_text = f"You are: {self.player_color}" if self.player_color else "Connecting..."
@@ -616,10 +532,8 @@ class ClientSideGame:
 
 
 # -------------------------
-# שימוש: מפעילים את הלקוח
+# Main entry
 # -------------------------
 if __name__ == "__main__":
-    # --- תיקון: מתחילים עם None ---
-    # השרת יקבע את הצבע שלנו
     client = ClientSideGame(None)
     client.run()

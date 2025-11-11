@@ -105,7 +105,8 @@ class Game:
     def run(self):
         """Main game loop."""
         while self.running:
-            self.handle_events()
+            if self.handle_events() == -1:
+                return
             self.update_hover_state()
             self.draw()
         self.quit()
@@ -143,13 +144,13 @@ class Game:
             if event.type == pygame.QUIT:
                 self.running = False
             elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                self.running = False
+                return -1
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:  # Left-click
                 # Handle point conquer
                 if self.hovered_point and self.hovered_point_is_valid:
                     self.gameLogic.make_conquer_move(self.hovered_point)
                     self.next_turn()
-                    return
+                    return 0
 
                 # Handle edge placement
                 if self.hovered_edge and self.hovered_edge_is_valid:
